@@ -1,0 +1,411 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Taku 原生广告 WebView Demo</title>
+  <style>
+    :root {
+      --bg: #f5f7fb;
+      --card: #ffffff;
+      --text: #1f2937;
+      --muted: #6b7280;
+      --primary: #0f62fe;
+      --ok: #0d9488;
+      --err: #dc2626;
+      --border: #e5e7eb;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background: linear-gradient(180deg, #f8fafc 0%, #eef2ff 100%);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      padding: 16px;
+    }
+
+    .panel {
+      max-width: 720px;
+      margin: 0 auto;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 14px;
+      box-shadow: 0 6px 24px rgba(15, 35, 95, 0.06);
+    }
+
+    h1 {
+      margin: 0 0 10px;
+      font-size: 18px;
+    }
+
+    .muted {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .row {
+      display: flex;
+      gap: 10px;
+      margin-top: 10px;
+      flex-wrap: wrap;
+    }
+
+    button {
+      border: 0;
+      border-radius: 10px;
+      padding: 10px 14px;
+      color: white;
+      background: var(--primary);
+      font-weight: 600;
+    }
+
+    button.secondary {
+      background: #4b5563;
+    }
+
+    .log {
+      margin-top: 12px;
+      font-size: 12px;
+      background: #0f172a;
+      color: #dbeafe;
+      border-radius: 10px;
+      padding: 10px;
+      height: 160px;
+      overflow: auto;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+
+    .status {
+      margin-top: 8px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .ok { color: var(--ok); }
+    .err { color: var(--err); }
+
+    .ad-card {
+      margin-top: 14px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: #fff;
+      overflow: hidden;
+      display: none;
+    }
+
+    .media {
+      width: 100%;
+      aspect-ratio: 16/9;
+      background: #f3f4f6;
+      display: grid;
+      place-items: center;
+      color: #9ca3af;
+      font-size: 13px;
+    }
+
+    .content {
+      padding: 12px;
+    }
+
+    .title {
+      margin: 0;
+      font-size: 16px;
+      line-height: 1.4;
+    }
+
+    .desc {
+      margin: 8px 0;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .meta {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 8px;
+      font-size: 12px;
+      color: #374151;
+    }
+
+    .logo {
+      width: 18px;
+      height: 18px;
+      border-radius: 4px;
+      background: #f3f4f6;
+      object-fit: cover;
+    }
+
+    .cta {
+      margin-top: 10px;
+      display: inline-block;
+      border-radius: 8px;
+      background: var(--primary);
+      color: #fff;
+      text-decoration: none;
+      font-size: 13px;
+      padding: 8px 12px;
+      font-weight: 600;
+    }
+
+    .tiny {
+      margin-top: 10px;
+      color: #9ca3af;
+      font-size: 11px;
+    }
+  </style>
+</head>
+<body>
+  <div class="panel">
+    <h1>Taku WebView 自渲染广告 Demo</h1>
+    <div class="muted">
+      1) 在 iOS WebView 里点击“请求广告”会通过 JS Bridge 向原生发请求。<br />
+      2) 在浏览器里可点“模拟回调”看渲染效果。<br />
+      3) 你可以通过 <code>window.TAKU_H5_CONFIG</code> 覆盖配置。
+    </div>
+
+    <div class="row">
+      <button id="btnLoad">请求广告</button>
+      <button id="btnMock" class="secondary">模拟回调</button>
+    </div>
+
+    <div id="status" class="status"></div>
+    <div id="log" class="log"></div>
+
+    <div id="adCard" class="ad-card">
+      <div id="media" class="media">原生媒体区域（视频/大图由原生渲染）</div>
+      <div class="content">
+        <h3 id="title" class="title">标题</h3>
+        <p id="desc" class="desc">描述</p>
+        <div class="meta">
+          <img id="logo" class="logo" alt="logo" />
+          <span id="advertiser">广告主</span>
+        </div>
+        <a id="cta" class="cta" href="javascript:void(0)">立即体验</a>
+        <div class="tiny">注：点击事件/曝光事件应继续由原生 SDK 侧上报。</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // ====== 你可以让站内脚本注入 window.TAKU_H5_CONFIG 覆盖这里 ======
+    const defaultConfig = {
+      // auto | callHandler | webkit | scheme
+      // 这里默认 webkit，避免误走你们旧 reward 的 callHandler(adRequest) 逻辑
+      bridgeMode: "webkit",
+      // 若你们是 this.$bridge.callHandler(...) 模式，通常不需要 bridgeHandlerName
+      bridgeHandlerName: "takuNativeAd", // iOS messageHandlers 名称（仅 webkit 直连模式用）
+      actionLoad: "adRequest", // 你提供的历史桥接里是 adRequest
+      actionClick: "clickNativeAd",
+      nativeCallbackSuccess: "onTakuNativeAdLoaded",
+      nativeCallbackFail: "onTakuNativeAdFailed",
+      placementId: "b67c51fdea5d72",
+      sceneId: "",
+      adSize: { width: 320, height: 180 },
+      timeoutMs: 8000,
+      debug: true
+    };
+
+    const CONFIG = Object.assign({}, defaultConfig, window.TAKU_H5_CONFIG || {});
+
+    const logEl = document.getElementById("log");
+    const statusEl = document.getElementById("status");
+    const adCardEl = document.getElementById("adCard");
+
+    function log(message, data) {
+      const line = `[${new Date().toLocaleTimeString()}] ${message}`;
+      logEl.textContent += data ? `${line} ${JSON.stringify(data)}\n` : `${line}\n`;
+      logEl.scrollTop = logEl.scrollHeight;
+      if (CONFIG.debug) console.log(message, data || "");
+    }
+
+    function setStatus(text, isError) {
+      statusEl.textContent = text;
+      statusEl.className = `status ${isError ? "err" : "ok"}`;
+    }
+
+    function buildLoadPayload() {
+      return {
+        action: CONFIG.actionLoad,
+        requestId: `req_${Date.now()}`,
+        placementId: CONFIG.placementId,
+        sceneId: CONFIG.sceneId,
+        extra: {
+          adSize: CONFIG.adSize,
+          // 如需渠道特殊参数，可继续放在这里
+          nativeAdType: "self_render"
+        }
+      };
+    }
+
+    function getGenericBridge() {
+      return window.TAKU_BRIDGE || window.$bridge || window.bridge || window.WebViewJavascriptBridge || null;
+    }
+
+    function postToIOS(payload, callback) {
+      const mode = (CONFIG.bridgeMode || "auto").toLowerCase();
+
+      // 1) 优先走 this.$bridge / callHandler 风格
+      const genericBridge = getGenericBridge();
+      if ((mode === "auto" || mode === "callhandler") && genericBridge && typeof genericBridge.callHandler === "function") {
+        try {
+          genericBridge.callHandler(payload.action, payload, function (response) {
+            if (typeof callback === "function") callback(response);
+          });
+          return "callHandler";
+        } catch (err) {
+          log("callHandler error", { message: String(err) });
+        }
+      }
+
+      // 2) 次选 window.webkit.messageHandlers 风格
+      const webkitBridge = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers[CONFIG.bridgeHandlerName];
+      if ((mode === "auto" || mode === "webkit") && webkitBridge && webkitBridge.postMessage) {
+        webkitBridge.postMessage(payload);
+        return "webkit";
+      }
+
+      if (mode === "callhandler") {
+        throw new Error("bridgeMode=callHandler 但未找到可用 callHandler");
+      }
+      if (mode === "webkit") {
+        throw new Error("bridgeMode=webkit 但未找到 window.webkit.messageHandlers");
+      }
+
+      // 兜底: URL Scheme（如果你们 App 侧有解析）
+      const scheme = `takuad://bridge?action=${encodeURIComponent(payload.action)}&payload=${encodeURIComponent(JSON.stringify(payload))}`;
+      const iframe = document.createElement("iframe");
+      iframe.style.display = "none";
+      iframe.src = scheme;
+      document.body.appendChild(iframe);
+      setTimeout(() => iframe.remove(), 300);
+
+      return "scheme";
+    }
+
+    function setupBridgeCallbacks() {
+      const genericBridge = getGenericBridge();
+      if (!genericBridge || typeof genericBridge.registerHandler !== "function") return;
+
+      genericBridge.registerHandler(CONFIG.nativeCallbackSuccess || "onTakuNativeAdLoaded", function (data) {
+        window.onTakuNativeAdLoaded(data || {});
+      });
+
+      genericBridge.registerHandler(CONFIG.nativeCallbackFail || "onTakuNativeAdFailed", function (error) {
+        window.onTakuNativeAdFailed(error || {});
+      });
+
+      log("registerHandler 已绑定", {
+        success: CONFIG.nativeCallbackSuccess || "onTakuNativeAdLoaded",
+        fail: CONFIG.nativeCallbackFail || "onTakuNativeAdFailed"
+      });
+    }
+
+    function renderAd(ad) {
+      document.getElementById("title").textContent = ad.title || "(无标题)";
+      document.getElementById("desc").textContent = ad.desc || "";
+      document.getElementById("advertiser").textContent = ad.advertiser || "";
+      document.getElementById("cta").textContent = ad.cta || "立即查看";
+
+      const logoEl = document.getElementById("logo");
+      if (ad.logoUrl) {
+        logoEl.src = ad.logoUrl;
+        logoEl.style.display = "inline-block";
+      } else {
+        logoEl.style.display = "none";
+      }
+
+      const mediaEl = document.getElementById("media");
+      if (ad.mainImageUrl) {
+        mediaEl.innerHTML = `<img src="${ad.mainImageUrl}" style="width:100%;height:100%;object-fit:cover;" alt="main"/>`;
+      } else {
+        mediaEl.textContent = "媒体由原生容器渲染";
+      }
+
+      adCardEl.style.display = "block";
+      setStatus("广告回调成功，已渲染", false);
+      log("renderAd", ad);
+    }
+
+    function reportClick() {
+      const payload = {
+        action: CONFIG.actionClick,
+        placementId: CONFIG.placementId,
+        sceneId: CONFIG.sceneId,
+        ts: Date.now()
+      };
+      try {
+        const mode = postToIOS(payload);
+        log(`点击事件已发送（${mode}）`, payload);
+      } catch (error) {
+        log("点击事件发送失败", { message: String(error && error.message || error) });
+      }
+    }
+
+    document.getElementById("btnLoad").addEventListener("click", () => {
+      const payload = buildLoadPayload();
+      if (!payload.placementId) {
+        setStatus("未配置 placementId，请先注入配置", true);
+        log("missing placementId");
+        return;
+      }
+      setStatus("已发起请求，等待原生回调", false);
+      try {
+        const mode = postToIOS(payload, function (response) {
+          // 一些 callHandler 桥会直接在回调里给数据
+          if (response && typeof response === "object" && (response.title || response.mainImageUrl || response.data)) {
+            window.onTakuNativeAdLoaded(response.data || response);
+          }
+        });
+        log(`load 请求已发送（${mode}）`, payload);
+      } catch (error) {
+        setStatus("桥接不可用，请检查 bridgeMode 和原生注入", true);
+        log("load 请求发送失败", { message: String(error && error.message || error) });
+        return;
+      }
+
+      setTimeout(() => {
+        if (statusEl.textContent.includes("等待")) {
+          setStatus("请求超时：未收到原生回调", true);
+          log("timeout", { timeoutMs: CONFIG.timeoutMs });
+        }
+      }, CONFIG.timeoutMs);
+    });
+
+    document.getElementById("btnMock").addEventListener("click", () => {
+      window.onTakuNativeAdLoaded({
+        requestId: `mock_${Date.now()}`,
+        placementId: CONFIG.placementId || "mock_placement",
+        title: "这是一条自渲染原生广告标题",
+        desc: "这里是广告描述文案，来自原生回调数据。",
+        cta: "立即安装",
+        advertiser: "Demo Advertiser",
+        logoUrl: "https://dummyimage.com/36x36/1e293b/ffffff.png&text=A",
+        mainImageUrl: "https://dummyimage.com/1280x720/e2e8f0/334155.png&text=Native+Main+Image"
+      });
+    });
+
+    document.getElementById("cta").addEventListener("click", reportClick);
+
+    // ====== 供 iOS 原生回调调用 ======
+    window.onTakuNativeAdLoaded = function (result) {
+      log("onTakuNativeAdLoaded", result);
+      renderAd(result || {});
+    };
+
+    window.onTakuNativeAdFailed = function (error) {
+      setStatus("广告请求失败", true);
+      log("onTakuNativeAdFailed", error || {});
+    };
+
+    setupBridgeCallbacks();
+    log("H5 demo ready", CONFIG);
+  </script>
+</body>
+</html>
